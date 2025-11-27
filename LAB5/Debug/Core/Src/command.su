@@ -1,0 +1,2 @@
+command.c:13:6:commandExecute	8	static
+command.c:30:6:commandParser	8	static

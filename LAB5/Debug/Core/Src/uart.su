@@ -1,0 +1,5 @@
+uart.c:15:6:HAL_UART_RxCpltCallback	16	static
+uart.c:23:6:addToPrint	16	static
+uart.c:27:6:directPrint	16	static
+uart.c:31:6:uartRead	8	static
+uart.c:38:6:uartSend	8	static

@@ -1,0 +1,126 @@
+/*
+ * scheduler.c
+ *
+ *  Created on: Nov 27, 2025
+ *      Author: ADMIN
+ */
+
+#include "scheduler.h"
+
+/* Ring buffer log cho các lần dispatch */
+volatile SCH_DispatchLog SCH_DispatchLogs[SCH_LOG_SIZE];
+volatile uint8_t SCH_LogHead = 0;
+volatile uint8_t SCH_LogTail = 0;
+
+static void SCH_LogPush(void (*pTask)(void), uint8_t id) {
+    uint8_t nextTail = (uint8_t)((SCH_LogTail + 1) % SCH_LOG_SIZE);
+    /* Nếu đầy, bỏ log cũ nhất */
+    if (nextTail == SCH_LogHead) {
+        SCH_LogHead = (uint8_t)((SCH_LogHead + 1) % SCH_LOG_SIZE);
+    }
+    SCH_DispatchLogs[SCH_LogTail].pTask = pTask;
+    SCH_DispatchLogs[SCH_LogTail].id = id;
+    SCH_DispatchLogs[SCH_LogTail].tick = HAL_GetTick();
+    SCH_LogTail = nextTail;
+}
+
+void SCH_Init(void) {
+    for (uint8_t i = 0; i < SCH_TASKNUMBER; i++) {
+        tasks[i].pTask = NULL;
+        tasks[i].id = SCH_TASKNUMBER - i - 1;
+        tasks[i].delay = 0;
+        tasks[i].period = 0;
+        tasks[i].flag = 0;
+    }
+    SCH_LogHead = SCH_LogTail = 0;
+}
+
+void SCH_Update(void) {
+    if (tasks[0].pTask == 0) return;
+    if (tasks[0].delay > 0) {
+        if (tasks[0].delay > SCH_TIMERTICK) {
+            tasks[0].delay -= SCH_TIMERTICK;
+        } else {
+            tasks[0].delay = 0;
+        }
+    }
+    if (tasks[0].delay == 0) {
+        tasks[0].flag = 1;
+    }
+}
+
+void SCH_Dispatch(void) {
+    if (tasks[0].pTask == 0 || tasks[0].flag == 0) return;
+
+    /* Gọi task */
+    void (*runTask)(void) = tasks[0].pTask;
+    uint8_t runId = tasks[0].id;
+    (*runTask)();
+
+    /* Ghi log sự kiện dispatch vừa xảy ra */
+    SCH_LogPush(runTask, runId);
+
+    tasks[0].flag = 0;
+    SCH_Task newTask = tasks[0];
+    SCH_DeleteTask(tasks[0].id);
+    if (newTask.period > 0) {
+        SCH_AddTask(newTask.pTask, newTask.period, newTask.period);
+    }
+}
+
+uint8_t SCH_AddTask(void (*pTask)(void), uint32_t delay, uint32_t period) {
+    if (tasks[SCH_TASKNUMBER - 1].pTask != 0) return SCH_TASKNUMBER;
+    uint8_t currentID = tasks[SCH_TASKNUMBER - 1].id;
+    uint32_t currentDelay = 0;
+    for (uint8_t i = 0; i < SCH_TASKNUMBER; i++) {
+        currentDelay += tasks[i].delay;
+        if (currentDelay > delay || tasks[i].pTask == 0) {
+            for (uint8_t j = SCH_TASKNUMBER - 1; j > i; j--) {
+                tasks[j] = tasks[j - 1];
+            }
+            tasks[i].pTask = pTask;
+            tasks[i].id = currentID;
+            tasks[i].period = period;
+            tasks[i].flag = 0;
+            if (currentDelay > delay) {
+                int newDelay = currentDelay - delay;
+                tasks[i].delay = tasks[i + 1].delay - newDelay;
+                if (tasks[i].delay == 0) {
+                    tasks[i].flag = 1;
+                }
+                tasks[i + 1].delay = newDelay;
+                if (tasks[i + 1].delay == 0) {
+                    tasks[i + 1].flag = 1;
+                }
+            } else {
+                tasks[i].delay = delay - currentDelay;
+                if (tasks[i].delay == 0) {
+                    tasks[i].flag = 1;
+                }
+            }
+            return tasks[i].id;
+        }
+    }
+    return SCH_TASKNUMBER;
+}
+
+unsigned char SCH_DeleteTask(uint8_t id) {
+    for (uint8_t i = 0; i < SCH_TASKNUMBER; i++) {
+        if (tasks[i].id == id) {
+            uint8_t currentID = tasks[i].id;
+            if (tasks[i + 1].pTask != 0) {
+                tasks[i + 1].delay += tasks[i].delay;
+            }
+            for (uint8_t j = i; j < SCH_TASKNUMBER - 1; j++) {
+                tasks[j] = tasks[j + 1];
+            }
+            tasks[SCH_TASKNUMBER - 1].pTask = 0;
+            tasks[SCH_TASKNUMBER - 1].id = currentID;
+            tasks[SCH_TASKNUMBER - 1].delay = 0;
+            tasks[SCH_TASKNUMBER - 1].period = 0;
+            tasks[SCH_TASKNUMBER - 1].flag = 0;
+            return tasks[SCH_TASKNUMBER - 1].pTask == 0;
+        }
+    }
+    return 0;
+}
